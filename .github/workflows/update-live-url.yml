@@ -1,0 +1,67 @@
+name: Atualizar URL da live
+
+on:
+  workflow_dispatch:
+    inputs:
+      live_url:
+        description: "URL da live no YouTube (ex: https://www.youtube.com/watch?v=XXXX, https://youtu.be/XXXX ou https://www.youtube.com/live/XXXX)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validar URL
+        env:
+          LIVE_URL: ${{ inputs.live_url }}
+        run: |
+          if [[ ! "$LIVE_URL" =~ ^https://(www\.)?(youtube\.com|youtu\.be)/ ]]; then
+            echo "::error::A URL informada não parece ser uma URL válida do YouTube."
+            exit 1
+          fi
+
+      - name: Atualizar data-live-url em index.html
+        env:
+          LIVE_URL: ${{ inputs.live_url }}
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          import re
+
+          live_url = os.environ["LIVE_URL"]
+
+          with open("index.html", "r", encoding="utf-8") as f:
+              content = f.read()
+
+          pattern = re.compile(r'(id="player-wrap"[\s\S]*?data-live-url=")[^"]*(")')
+          new_content, count = pattern.subn(
+              lambda m: m.group(1) + live_url + m.group(2),
+              content,
+              count=1,
+          )
+
+          if count == 0:
+              raise SystemExit("Não foi possível localizar o atributo data-live-url em index.html")
+
+          with open("index.html", "w", encoding="utf-8") as f:
+              f.write(new_content)
+          PYEOF
+
+      - name: Commit e push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          if git diff --cached --quiet; then
+            echo "URL já estava atualizada, nada para commitar."
+          else
+            git commit -m "chore: atualizar URL da live"
+            git push
+          fi
