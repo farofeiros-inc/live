@@ -27,21 +27,50 @@ jobs:
             exit 1
           fi
 
-      - name: Atualizar data-live-url em index.html
+      - name: Atualizar data-live-url e og:image em index.html
         env:
           LIVE_URL: ${{ inputs.live_url }}
         run: |
           python3 - <<'PYEOF'
           import os
           import re
+          import urllib.request
+          import urllib.error
+          from urllib.parse import urlparse, parse_qs
 
           live_url = os.environ["LIVE_URL"]
+
+          def extract_video_id(url):
+              parsed = urlparse(url)
+              hostname = parsed.hostname or ""
+              if "youtu.be" in hostname:
+                  video_id = parsed.path.lstrip("/")
+                  return video_id or None
+              qs_v = parse_qs(parsed.query).get("v")
+              if qs_v:
+                  return qs_v[0]
+              live_match = re.search(r"/live/([^/?]+)", parsed.path)
+              if live_match:
+                  return live_match.group(1)
+              embed_match = re.search(r"/embed/([^/?]+)", parsed.path)
+              if embed_match and embed_match.group(1) != "live_stream":
+                  return embed_match.group(1)
+              return None
+
+          def thumbnail_exists(video_id, name):
+              thumb_url = f"https://img.youtube.com/vi/{video_id}/{name}.jpg"
+              req = urllib.request.Request(thumb_url, method="HEAD")
+              try:
+                  with urllib.request.urlopen(req, timeout=10) as resp:
+                      return resp.status == 200
+              except urllib.error.URLError:
+                  return False
 
           with open("index.html", "r", encoding="utf-8") as f:
               content = f.read()
 
           pattern = re.compile(r'(id="player-wrap"[\s\S]*?data-live-url=")[^"]*(")')
-          new_content, count = pattern.subn(
+          content, count = pattern.subn(
               lambda m: m.group(1) + live_url + m.group(2),
               content,
               count=1,
@@ -50,8 +79,25 @@ jobs:
           if count == 0:
               raise SystemExit("Não foi possível localizar o atributo data-live-url em index.html")
 
+          video_id = extract_video_id(live_url)
+          if video_id is None:
+              raise SystemExit("Não foi possível extrair o ID do vídeo a partir da URL informada.")
+
+          quality = "maxresdefault" if thumbnail_exists(video_id, "maxresdefault") else "hqdefault"
+          og_image_url = f"https://img.youtube.com/vi/{video_id}/{quality}.jpg"
+
+          og_pattern = re.compile(r'(<meta property="og:image" content=")[^"]*(" />)')
+          content, og_count = og_pattern.subn(
+              lambda m: m.group(1) + og_image_url + m.group(2),
+              content,
+              count=1,
+          )
+
+          if og_count == 0:
+              raise SystemExit("Não foi possível localizar a tag og:image em index.html")
+
           with open("index.html", "w", encoding="utf-8") as f:
-              f.write(new_content)
+              f.write(content)
           PYEOF
 
       - name: Commit e push
