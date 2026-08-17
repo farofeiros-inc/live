@@ -22,6 +22,8 @@ jobs:
         env:
           LIVE_URL: ${{ inputs.live_url }}
         run: |
+          LIVE_URL="${LIVE_URL#"${LIVE_URL%%[![:space:]]*}"}"
+          LIVE_URL="${LIVE_URL%"${LIVE_URL##*[![:space:]]}"}"
           if [[ ! "$LIVE_URL" =~ ^https://([a-z0-9-]+\.)*(youtube\.com|youtu\.be|youtube-nocookie\.com)/ ]]; then
             echo "::error::A URL informada não parece ser uma URL válida do YouTube."
             exit 1
@@ -38,7 +40,7 @@ jobs:
           import urllib.error
           from urllib.parse import urlparse, parse_qs
 
-          live_url = os.environ["LIVE_URL"]
+          live_url = os.environ["LIVE_URL"].strip()
 
           def extract_video_id(url):
               parsed = urlparse(url)
