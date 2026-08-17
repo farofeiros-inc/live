@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       live_url:
-        description: "URL da live no YouTube (ex: https://www.youtube.com/watch?v=XXXX, https://youtu.be/XXXX ou https://www.youtube.com/live/XXXX)"
+        description: "URL da live no YouTube (watch?v=, youtu.be, /live/, /shorts/, /embed/ etc.). Será normalizada para a forma canônica."
         required: true
         type: string
 
@@ -22,7 +22,7 @@ jobs:
         env:
           LIVE_URL: ${{ inputs.live_url }}
         run: |
-          if [[ ! "$LIVE_URL" =~ ^https://(www\.)?(youtube\.com|youtu\.be)/ ]]; then
+          if [[ ! "$LIVE_URL" =~ ^https://([a-z0-9-]+\.)*(youtube\.com|youtu\.be|youtube-nocookie\.com)/ ]]; then
             echo "::error::A URL informada não parece ser uma URL válida do YouTube."
             exit 1
           fi
@@ -42,19 +42,25 @@ jobs:
 
           def extract_video_id(url):
               parsed = urlparse(url)
-              hostname = parsed.hostname or ""
-              if "youtu.be" in hostname:
-                  video_id = parsed.path.lstrip("/")
-                  return video_id or None
+              hostname = (parsed.hostname or "").lower()
+              path = parsed.path or ""
+
+              if hostname == "youtu.be" or hostname.endswith(".youtu.be"):
+                  video_id = path.strip("/")
+                  return video_id.split("/")[0] or None
+
               qs_v = parse_qs(parsed.query).get("v")
-              if qs_v:
+              if qs_v and qs_v[0]:
                   return qs_v[0]
-              live_match = re.search(r"/live/([^/?]+)", parsed.path)
-              if live_match:
-                  return live_match.group(1)
-              embed_match = re.search(r"/embed/([^/?]+)", parsed.path)
-              if embed_match and embed_match.group(1) != "live_stream":
-                  return embed_match.group(1)
+
+              resource_match = re.search(
+                  r"/(live|embed|shorts|v|video)/([^/?#]+)", path
+              )
+              if resource_match:
+                  candidate = resource_match.group(2)
+                  if candidate != "live_stream":
+                      return candidate
+
               return None
 
           def thumbnail_exists(video_id, name):
@@ -66,22 +72,24 @@ jobs:
               except urllib.error.URLError:
                   return False
 
+          video_id = extract_video_id(live_url)
+          if video_id is None:
+              raise SystemExit("Não foi possível extrair o ID do vídeo a partir da URL informada.")
+
+          canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+
           with open("index.html", "r", encoding="utf-8") as f:
               content = f.read()
 
           pattern = re.compile(r'(id="player-wrap"[\s\S]*?data-live-url=")[^"]*(")')
           content, count = pattern.subn(
-              lambda m: m.group(1) + live_url + m.group(2),
+              lambda m: m.group(1) + canonical_url + m.group(2),
               content,
               count=1,
           )
 
           if count == 0:
               raise SystemExit("Não foi possível localizar o atributo data-live-url em index.html")
-
-          video_id = extract_video_id(live_url)
-          if video_id is None:
-              raise SystemExit("Não foi possível extrair o ID do vídeo a partir da URL informada.")
 
           quality = "maxresdefault" if thumbnail_exists(video_id, "maxresdefault") else "hqdefault"
           og_image_url = f"https://img.youtube.com/vi/{video_id}/{quality}.jpg"
